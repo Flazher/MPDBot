@@ -1,88 +1,92 @@
 package telegram;
 
-import com.vdurmont.emoji.EmojiParser;
+import command.*;
+import command.control.*;
+import io.vertx.core.Future;
+import io.vertx.core.Vertx;
+import io.vertx.core.json.JsonObject;
 import org.telegram.telegrambots.api.methods.send.SendMessage;
-import org.telegram.telegrambots.api.methods.updatingmessages.EditMessageText;
 import org.telegram.telegrambots.api.objects.Message;
 import org.telegram.telegrambots.api.objects.Update;
-import org.telegram.telegrambots.api.objects.replykeyboard.InlineKeyboardMarkup;
-import org.telegram.telegrambots.api.objects.replykeyboard.buttons.InlineKeyboardButton;
 import org.telegram.telegrambots.bots.TelegramLongPollingBot;
 import org.telegram.telegrambots.exceptions.TelegramApiException;
 
 import java.util.ArrayList;
 import java.util.List;
-
-import static java.lang.Math.toIntExact;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Created by flazher on 15.02.18.
  */
 public class TelegramMPDBot extends TelegramLongPollingBot {
+
+    private String botName;
+    private String botToken;
+    private String owner;
+    private Boolean hateEveryoneElse;
+
+    private BotCommandsSet commandsSet;
+    private MPDBotContext context;
+
+    public TelegramMPDBot(Vertx vertx, JsonObject config) {
+        this.botName = config.getString("telegram.bot.name");
+        this.botToken = config.getString("telegram.bot.token");
+        this.owner = config.getString("telegram.bot.owner");
+        this.hateEveryoneElse = config.getBoolean("telegram.bot.hate_everyone_else", true);
+        this.context = MPDBotContext.init(vertx, config);
+        this.commandsSet = BotCommandsSet.init(context)
+                .register(new BotCommandControl())
+                .register(new BotCommandPlaylists())
+                .register(new BotCommandNextPage())
+                .register(new BotCommandPreviousPage())
+                .register(new BotCommandPlay())
+                .register(new BotCommandPause())
+                .register(new BotCommandMute())
+                .register(new BotCommandVolumeUp())
+                .register(new BotCommandVolumeDown())
+                .register(new BotCommandPreviousTrack())
+                .register(new BotCommandNextTrack());
+    }
+
     @Override
     public void onUpdateReceived(Update update) {
-        if (update.hasMessage() && update.getMessage().hasText()) {
-            Message message = update.getMessage();
-            SendMessage sendMessage = new SendMessage()
-                    .enableMarkdown(true)
-                    .setChatId(message.getChatId())
-                    .setText(message.getText() + " yourself.");
+        Message message = update.getMessage();
+        SendMessage sendMessage = new SendMessage()
+                .enableMarkdown(true)
+                .setChatId(message.getChatId());
 
-
-            InlineKeyboardMarkup markupInline = new InlineKeyboardMarkup();
-            List<List<InlineKeyboardButton>> rowsInline = new ArrayList<>();
-
-            List<InlineKeyboardButton> rowInline = new ArrayList<>();
-            rowInline.add(new InlineKeyboardButton().setText("twenty one pilots: Stressed Out ").setCallbackData("update_msg_text"));
-
-            List<InlineKeyboardButton> rowInline2 = new ArrayList<>();
-            rowInline2.add(new InlineKeyboardButton().setText("twenty one pilots: Stressed Out ").setCallbackData("update_msg_text"));
-            rowInline2.add(new InlineKeyboardButton().setText(EmojiParser.parseToUnicode(":speaker:")));
-            rowInline2.add(new InlineKeyboardButton().setText(EmojiParser.parseToUnicode(":loud_sound:")));
-            rowInline2.add(new InlineKeyboardButton().setText(EmojiParser.parseToUnicode(":arrow_forward:")));
-            rowInline2.add(new InlineKeyboardButton().setText("\u23F8️"));
-            // Set the keyboard to the markup
-            rowsInline.add(rowInline);
-            rowsInline.add(rowInline2);
-
-            // Add it to the message
-            markupInline.setKeyboard(rowsInline);
-
-            sendMessage.setReplyMarkup(markupInline);
+        if (owner != null && !owner.equals(message.getFrom().getUserName()) && hateEveryoneElse) {
             try {
+                sendMessage.setText("Ignoring");
                 execute(sendMessage);
             } catch (TelegramApiException e) {
                 e.printStackTrace();
             }
-        } else if (update.hasCallbackQuery()) {
-            // Set variables
-            String call_data = update.getCallbackQuery().getData();
-            long message_id = update.getCallbackQuery().getMessage().getMessageId();
-            long chat_id = update.getCallbackQuery().getMessage().getChatId();
-
-            if (call_data.equals("update_msg_text")) {
-                String answer = "Updated message text";
-                EditMessageText new_message = new EditMessageText()
-                        .setChatId(chat_id)
-                        .setMessageId(toIntExact(message_id))
-                        .setText(answer);
+        } else if (update.hasMessage() && update.getMessage().hasText()) {
+            Future<Void> future = commandsSet.tryExecute(message.getText(), sendMessage);
+            future.setHandler(v -> {
+                if (v.succeeded()) {
+                } else {
+                    sendMessage.setText(message.getText() + " yourself.");
+                }
                 try {
-                    execute(new_message);
+                    execute(sendMessage);
                 } catch (TelegramApiException e) {
                     e.printStackTrace();
                 }
-            }
+            });
         }
     }
 
     @Override
     public String getBotUsername() {
-        return "FlazherMPDBot";
+        return botName;
     }
 
     @Override
     public String getBotToken() {
-        return "";
+        return botToken;
     }
 
     @Override
